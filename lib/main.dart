@@ -4,17 +4,20 @@ import 'dart:ui' as ui;
 import 'package:draw_your_image/draw_your_image.dart';
 import 'package:flutter/material.dart';
 
-/// 黒板サンプルアプリ。
+/// Chalkboard sample app.
 ///
-/// 深緑の黒板に白チョークで書き、黒板消しで消す。要素は4つだけ:
-/// 1. 黒板の地(深緑＋拭き跡・粉ムラのビネット) — [ChalkboardBackgroundPainter]
-/// 2. チョーク描画(粒状ノイズシェーダで粉っぽい掠れ)
-/// 3. 黒板消し(BlendMode.dstOut ＋ 同じノイズで「まだらに消えて掠れが残る」)
-/// 4. 全クリア
+/// Write with white chalk on a dark green chalkboard and erase with a
+/// blackboard eraser. There are only four elements:
+/// 1. Board surface (dark green + wipe marks / dust vignette) — [ChalkboardBackgroundPainter]
+/// 2. Chalk strokes (powdery, scratchy look via a grain noise shader)
+/// 3. Eraser (BlendMode.dstOut + the same noise for a "patchy erase with
+///    scratchy leftovers" look)
+/// 4. Clear all
 ///
-/// ストロークの入力・保持・saveLayer 合成は draw_your_image パッケージの [Draw] に
-/// 任せ、このファイルは「1本のストロークをどう塗るか(Paint 層)」だけを組み立てる。
-/// チョークの掠れは shaders/chalk.frag のフラグメントシェーダが作る。
+/// Stroke input, storage, and saveLayer compositing are delegated to the
+/// [Draw] widget from the draw_your_image package; this file only builds
+/// "how a single stroke is painted" (the Paint layers). The chalk scratchiness
+/// comes from the fragment shader in shaders/chalk.frag.
 void main() {
   runApp(const ChalkboardSampleApp());
 }
@@ -33,70 +36,77 @@ class ChalkboardSampleApp extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// 調整値(見た目のつまみは全部ここ)
+// Tuning values (every visual knob lives here)
 // ---------------------------------------------------------------------------
 
-/// 黒板の見た目を決める調整パラメータの一覧(単一の置き場)。
+/// Tuning parameters that define the chalkboard's look (single place to edit).
 abstract final class ChalkboardTuning {
-  // --- 黒板の地 ---
-  /// 黒板の基調色(深緑)。中央付近に使う明るめの緑。
+  // --- Board surface ---
+  /// Base color of the board (dark green). Slightly brighter, used near the
+  /// center.
   static const Color boardColor = Color(0xFF2F4A3A);
 
-  /// 黒板の縁に向かって落とす暗い緑(使い込んだ周辺の暗がり=ビネット)。
+  /// Darker green falling off toward the edges (the vignette of a well-used
+  /// board).
   static const Color boardEdgeColor = Color(0xFF213528);
 
-  /// 拭き跡・チョーク粉のムラ(スマッジ)の枚数。多いほど使用感が増す。
+  /// Number of wipe-mark / chalk-dust smudges. More means a more worn look.
   static const int smudgeCount = 28;
 
-  /// スマッジ生成の固定シード。リビルドで黒板の地がチラつかないための決定性。
+  /// Fixed seed for smudge generation. Keeps the board surface deterministic
+  /// so it doesn't flicker across rebuilds.
   static const int smudgeSeed = 20240720;
 
-  /// スマッジのぼかし半径(px)。大きいほど跡がふんわり広がる。
+  /// Blur radius of a smudge (px). Larger spreads the mark more softly.
   static const double smudgeBlur = 14.0;
 
-  // --- 白チョーク(芯) ---
-  /// チョークの色(わずかに温かみのある白)。
+  // --- White chalk (core) ---
+  /// Chalk color (white with a slight warm tint).
   static const Color chalkColor = Color(0xFFF3F1E7);
 
-  /// チョークの基準の太さ。スタイラスの筆圧で増減する。
+  /// Base chalk width. Varies with stylus pressure.
   static const double chalkWidth = 12.0;
 
-  /// チョーク芯の「詰まり具合」。小さいほど粒が抜けて掠れる(0..1)。
+  /// How "packed" the chalk core is. Smaller drops more grains and looks more
+  /// scratchy (0..1).
   static const double chalkDensity = 0.72;
 
-  /// チョークの粒の細かさ(px/セル)。小さいほど細かい粒になる。
+  /// Grain size of the chalk (px per cell). Smaller makes finer grains.
   static const double chalkGrain = 2.6;
 
-  // --- 白チョーク(淡いハロ=粉っぽさ) ---
-  /// 芯の周りに敷く淡い光背の不透明度。粉が舞った感じを足す。
+  // --- White chalk (soft halo = powderiness) ---
+  /// Opacity of the faint halo laid under the core. Adds a dusty feel.
   static const double chalkHaloAlpha = 0.16;
 
-  /// 光背のぼかし半径(px)。
+  /// Blur radius of the halo (px).
   static const double chalkHaloBlur = 3.5;
 
-  // --- 黒板消し ---
-  /// 黒板消しでなぞる帯の太さ(px)。
+  // --- Eraser ---
+  /// Width of the band swept by the eraser (px).
   static const double eraserWidth = 52.0;
 
-  /// 黒板消しの「消え具合」。小さいほど消し残りが増える(0..1)。
+  /// How thoroughly the eraser erases. Smaller leaves more residue (0..1).
   static const double eraserDensity = 0.9;
 
-  /// 黒板消しのノイズの粒の粗さ(px/セル)。チョークより粗くしてムラを大きくする。
+  /// Grain size of the eraser noise (px per cell). Coarser than the chalk to
+  /// make the patches larger.
   static const double eraserGrain = 3.4;
 
-  /// 消した跡へ重ねる「伸びたチョーク粉」の白の不透明度。ごく薄く。
+  /// Opacity of the "smeared chalk dust" white layered over erased areas.
+  /// Kept very faint.
   static const double eraserDustAlpha = 0.05;
 
-  /// チョーク粉レイヤのぼかし半径(px)。
+  /// Blur radius of the chalk dust layer (px).
   static const double eraserDustBlur = 7.0;
 }
 
 // ---------------------------------------------------------------------------
-// 純粋ロジック(黒板の地のムラ生成・ストロークのシード)
+// Pure logic (board smudge generation / stroke seeding)
 // ---------------------------------------------------------------------------
 
-/// 黒板の拭き跡・チョーク粉の1枚分のムラ。座標・半径は画面サイズに依らない
-/// 正規化値(0..1)で持ち、描画時にサイズを掛けて実座標へ直す。
+/// A single wipe-mark / chalk-dust smudge on the board. Position and radii are
+/// stored as normalized values (0..1) independent of screen size, and scaled
+/// to actual coordinates at paint time.
 class ChalkSmudge {
   const ChalkSmudge({
     required this.center,
@@ -107,39 +117,44 @@ class ChalkSmudge {
     required this.lighten,
   });
 
-  /// 中心(0..1 の正規化座標)。
+  /// Center (normalized 0..1 coordinates).
   final Offset center;
 
-  /// 横・縦半径(幅・高さに対する 0..1 の比率)。
+  /// Horizontal / vertical radii (ratio 0..1 of width / height).
   final double radiusX;
   final double radiusY;
 
-  /// 楕円の回転(ラジアン)。拭いた向きのばらつきを表す。
+  /// Rotation of the ellipse (radians). Represents the varying direction of
+  /// wipes.
   final double rotation;
 
-  /// 不透明度(0..1)。地に薄く乗せるので小さめ。
+  /// Opacity (0..1). Kept small since it is layered thinly over the surface.
   final double opacity;
 
-  /// true = 拭いて明るくなった跡(白寄り) / false = チョーク粉の暗い残り(黒寄り)。
+  /// true = a wiped, brightened mark (whitish) / false = dark chalk-dust
+  /// residue (blackish).
   final bool lighten;
 }
 
-/// 黒板の質感ムラを決定的に生成する。同じ [seed] なら常に同じ並びを返すので、
-/// リビルドしても地の見た目が変わらない。
+/// Deterministically generates the board's texture smudges. The same [seed]
+/// always yields the same sequence, so the surface looks identical across
+/// rebuilds.
 List<ChalkSmudge> generateChalkboardSmudges({
   int count = ChalkboardTuning.smudgeCount,
   int seed = ChalkboardTuning.smudgeSeed,
 }) {
   final rng = math.Random(seed);
   return List<ChalkSmudge>.generate(count, (_) {
-    // 拭き跡(明)を多めにして、使い込んで白っぽく曇った黒板らしさを出す。
+    // Favor brightened wipe marks to get the whitish, hazy look of a
+    // well-used board.
     final lighten = rng.nextDouble() < 0.62;
     return ChalkSmudge(
       center: Offset(rng.nextDouble(), rng.nextDouble()),
       radiusX: 0.08 + rng.nextDouble() * 0.22,
       radiusY: 0.04 + rng.nextDouble() * 0.12,
       rotation: rng.nextDouble() * math.pi,
-      // 白寄りの拭き跡は黒板の白み(曇り)に直結するため、粉残りの半分程度に抑える。
+      // Whitish wipe marks directly add haze to the board, so keep them at
+      // about half the opacity of the dust residue.
       opacity: lighten
           ? 0.015 + rng.nextDouble() * 0.0225
           : 0.02 + rng.nextDouble() * 0.045,
@@ -148,39 +163,45 @@ List<ChalkSmudge> generateChalkboardSmudges({
   });
 }
 
-/// ストロークの代表点([p]=描き始めの点)から、そのストローク固有の決定的な
-/// シード値(0..1000 程度)を作る。チョーク/黒板消しのノイズシェーダに渡す
-/// u_seed に使い、ストロークごとに粒の出方を変えつつ、同じストロークなら
-/// 再描画で毎回同じ見た目になるようにする(チラつき防止)。
+/// Builds a deterministic per-stroke seed value (roughly 0..1000) from the
+/// stroke's representative point ([p] = the first point of the stroke). Passed
+/// as u_seed to the chalk/eraser noise shader so each stroke gets its own
+/// grain pattern, while the same stroke always repaints identically
+/// (no flicker).
 double chalkSeedForPoint(Offset p) {
-  // 1〜2px の微差でシードが暴れないよう、2px 格子へ量子化してからハッシュする。
+  // Quantize to a 2px grid before hashing so a 1-2px jitter doesn't change
+  // the seed.
   final xi = (p.dx / 2).round();
   final yi = (p.dy / 2).round();
-  // 空間ハッシュの定番の大きな素数で撹拌し、非負へ落とす。
+  // Mix with the usual large primes for spatial hashing, then clamp to
+  // non-negative.
   var h = (xi * 73856093) ^ (yi * 19349663);
   h &= 0x7fffffff;
   return (h % 100000) / 100.0;
 }
 
 // ---------------------------------------------------------------------------
-// 黒板の地を描く CustomPainter
+// CustomPainter for the board surface
 // ---------------------------------------------------------------------------
 
-/// 黒板の地(深緑＋うっすら質感ムラ)を描く CustomPainter。
+/// CustomPainter that draws the board surface (dark green + subtle texture
+/// smudges).
 ///
-/// チョークのストローク層([Draw])の「下」に敷く背景専用。計算済みの
-/// [ChalkSmudge] 列を受け取り、正規化座標をサイズへ掛けて楕円を薄く重ねるだけ。
+/// A background-only layer laid *under* the chalk stroke layer ([Draw]). It
+/// receives precomputed [ChalkSmudge]s and simply scales the normalized
+/// coordinates to the size and layers faint ellipses.
 class ChalkboardBackgroundPainter extends CustomPainter {
   const ChalkboardBackgroundPainter({required this.smudges});
 
-  /// 決定的に生成済みの拭き跡・粉ムラ。
+  /// Deterministically pre-generated wipe marks / dust smudges.
   final List<ChalkSmudge> smudges;
 
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
 
-    // 地: 中央を少し明るく、縁へ向けて暗く落とす(使い込んだ黒板のビネット)。
+    // Surface: slightly brighter in the center, darkening toward the edges
+    // (the vignette of a well-used board).
     final base = Paint()
       ..shader = ui.Gradient.radial(
         rect.center,
@@ -190,7 +211,8 @@ class ChalkboardBackgroundPainter extends CustomPainter {
       );
     canvas.drawRect(rect, base);
 
-    // 拭き跡・チョーク粉。明は白寄り(拭いた跡)、暗は黒寄り(粉残り)。
+    // Wipe marks and chalk dust. Light = whitish wiped marks,
+    // dark = blackish dust residue.
     for (final s in smudges) {
       final center = Offset(
         s.center.dx * size.width,
@@ -224,18 +246,20 @@ class ChalkboardBackgroundPainter extends CustomPainter {
 }
 
 // ---------------------------------------------------------------------------
-// 黒板画面
+// Chalkboard page
 // ---------------------------------------------------------------------------
 
-/// いま使っている道具。チョークで書くか、黒板消しで消すか。
+/// The tool currently in use: write with chalk or erase with the eraser.
 enum ChalkTool { chalk, eraser }
 
-/// 黒板画面。構造は3層の [Stack]:
-/// 1. 黒板の地(深緑＋質感ムラ)を [ChalkboardBackgroundPainter] で描く。
-/// 2. その上に透明背景の [Draw] を重ね、チョーク/黒板消しのストロークを描く。
-///    [Draw] は strokes を saveLayer 内で合成するので、黒板消しの
-///    `BlendMode.dstOut` はこの層のチョークだけを消し、下の地には影響しない。
-/// 3. 最小の操作系(チョーク/黒板消しの切替＋全消し)をフローティングで重ねる。
+/// Chalkboard screen. Structured as a three-layer [Stack]:
+/// 1. Board surface (dark green + texture smudges) drawn by
+///    [ChalkboardBackgroundPainter].
+/// 2. A transparent-background [Draw] on top for chalk/eraser strokes.
+///    [Draw] composites strokes inside a saveLayer, so the eraser's
+///    `BlendMode.dstOut` erases only this layer's chalk and never affects the
+///    board surface below.
+/// 3. Minimal floating controls (chalk/eraser toggle + clear all).
 class ChalkboardPage extends StatefulWidget {
   const ChalkboardPage({super.key});
 
@@ -244,16 +268,19 @@ class ChalkboardPage extends StatefulWidget {
 }
 
 class _ChalkboardPageState extends State<ChalkboardPage> {
-  /// 描き終えたストローク(チョーク・黒板消しとも data のタグで区別する)。
+  /// Completed strokes (chalk and eraser alike, distinguished by a tag in
+  /// data).
   List<Stroke> _strokes = [];
 
   ChalkTool _tool = ChalkTool.chalk;
 
-  /// 黒板の質感ムラは一度だけ決定的に生成し、リビルドで作り直さない。
+  /// Board texture smudges are generated deterministically once and never
+  /// rebuilt.
   final List<ChalkSmudge> _smudges = generateChalkboardSmudges();
 
-  /// 粒状ノイズのフラグメントシェーダ。読み込み完了までは null で、その間は
-  /// シェーダ無しのフォールバック描画にする(読み込み前・失敗時でも落ちない)。
+  /// Fragment shader for grain noise. Null until loading completes; in the
+  /// meantime a shaderless fallback is used (never crashes before load or on
+  /// failure).
   ui.FragmentProgram? _program;
 
   bool get _isEraser => _tool == ChalkTool.eraser;
@@ -261,14 +288,15 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
   @override
   void initState() {
     super.initState();
-    // シェーダは非同期ロード。失敗しても握りつぶし、フォールバック描画に任せる。
+    // Load the shader asynchronously. Swallow failures and rely on the
+    // fallback painting.
     ui.FragmentProgram.fromAsset('shaders/chalk.frag').then((program) {
       if (mounted) setState(() => _program = program);
     }, onError: (_, _) {});
   }
 
-  /// 描き始めるストロークに道具のタグ・太さを付ける。黒板消しは #eraser を立て、
-  /// strokePainter で消し方を切り替える。
+  /// Tags a starting stroke with the current tool and width. Eraser strokes
+  /// get the #eraser flag, which strokePainter uses to switch behavior.
   Stroke _configure(Stroke stroke) {
     return _isEraser
         ? stroke.copyWith(
@@ -280,16 +308,16 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
 
   void _clear() => setState(() => _strokes = []);
 
-  /// チョーク特有の太さ変化はチョークのときだけ pressureSensitive を使い、黒板消しは
-  /// 均一な帯にするため catmullRom(中心線)にする。
+  /// Chalk uses pressureSensitive for its characteristic width variation;
+  /// the eraser uses catmullRom (centerline) to keep the band uniform.
   ui.Path _buildPath(Stroke stroke) {
     return stroke.data?[#eraser] == true
         ? PathBuilderMode.catmullRom.converter(stroke)
         : PathBuilderMode.pressureSensitive.converter(stroke);
   }
 
-  /// 粒状ノイズシェーダの [Paint] を作る。シェーダ未ロードなら null を返し、
-  /// 呼び出し側でフォールバックさせる。
+  /// Builds a [Paint] using the grain noise shader. Returns null when the
+  /// shader is not loaded yet, letting the caller fall back.
   Paint? _grainPaint(
     Size size, {
     required double seed,
@@ -302,8 +330,9 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
   }) {
     final program = _program;
     if (program == null) return null;
-    // シェーダはストロークごとに新しいインスタンスを作る(使い回すと全ストロークが
-    // 同じ uniform になる)。uniform の並びは chalk.frag の宣言順に対応。
+    // Create a fresh shader instance per stroke (sharing one would give every
+    // stroke the same uniforms). The uniform order matches the declaration
+    // order in chalk.frag.
     final shader = program.fragmentShader();
     shader.setFloat(0, size.width); // u_resolution.x
     shader.setFloat(1, size.height); // u_resolution.y
@@ -323,10 +352,12 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
     return paint;
   }
 
-  /// ストローク1本ぶんの Paint 層を返す。粒状の芯＋淡いハロ(チョーク)/
-  /// まだら消し＋伸びた粉(黒板消し)を、それぞれ下→上の順で重ねる。
+  /// Returns the Paint layers for one stroke: grainy core + faint halo
+  /// (chalk) / patchy erase + smeared dust (eraser), each ordered bottom to
+  /// top.
   List<Paint> _paintStroke(Stroke stroke, Size size) {
-    // シードはストローク座標由来で決定的。リビルドしても粒の並びが変わらない。
+    // The seed derives from the stroke's coordinates and is deterministic, so
+    // the grain pattern survives rebuilds unchanged.
     final seed = stroke.points.isNotEmpty
         ? chalkSeedForPoint(stroke.points.first.position)
         : 0.0;
@@ -337,7 +368,8 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
 
   List<Paint> _chalkPaints(Size size, double seed) {
     return [
-      // 1) 淡いハロ(粉っぽさ): 塗り面をぼかした薄い白。芯の抜けから透けて見える。
+      // 1) Faint halo (powderiness): a blurred, thin white fill. Shows
+      //    through the gaps in the core.
       Paint()
         ..color = ChalkboardTuning.chalkColor.withValues(
           alpha: ChalkboardTuning.chalkHaloAlpha,
@@ -347,7 +379,7 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
           BlurStyle.normal,
           ChalkboardTuning.chalkHaloBlur,
         ),
-      // 2) 芯: 粒状ノイズでアルファをまだらに抜いた白チョーク。
+      // 2) Core: white chalk with its alpha punched out by grain noise.
       _grainPaint(
             size,
             seed: seed,
@@ -357,7 +389,7 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
             style: PaintingStyle.fill,
             blend: BlendMode.srcOver,
           ) ??
-          // フォールバック(シェーダ未ロード): 粒無しのベタ塗り。
+          // Fallback (shader not loaded): a solid fill with no grain.
           (Paint()
             ..color = ChalkboardTuning.chalkColor
             ..style = PaintingStyle.fill),
@@ -366,7 +398,8 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
 
   List<Paint> _eraserPaints(Stroke stroke, Size size, double seed) {
     return [
-      // 1) まだら消し: dstOut。ノイズのアルファぶんだけ消え、掠れが残る。
+      // 1) Patchy erase: dstOut. Erases by the noise's alpha, leaving
+      //    scratchy remnants.
       _grainPaint(
             size,
             seed: seed,
@@ -377,14 +410,16 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
             blend: BlendMode.dstOut,
             strokeWidth: stroke.width,
           ) ??
-          // フォールバック(シェーダ未ロード): 均一な dstOut でなぞった所を消す。
+          // Fallback (shader not loaded): erase the swept area uniformly with
+          // dstOut.
           (Paint()
             ..color = Colors.white
             ..blendMode = BlendMode.dstOut
             ..style = PaintingStyle.stroke
             ..strokeWidth = stroke.width
             ..strokeCap = StrokeCap.round),
-      // 2) 伸びたチョーク粉: 消した跡へ、ごく薄い白のぼかしを srcOver で重ねる。
+      // 2) Smeared chalk dust: a very faint blurred white layered over the
+      //    erased area with srcOver.
       Paint()
         ..color = ChalkboardTuning.chalkColor.withValues(
           alpha: ChalkboardTuning.eraserDustAlpha,
@@ -409,13 +444,15 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
           return Stack(
             fit: StackFit.expand,
             children: [
-              // 1) 黒板の地(Draw の saveLayer の外)。消しゴムの合成に汚されない。
+              // 1) Board surface (outside Draw's saveLayer), untouched by the
+              //    eraser compositing.
               Positioned.fill(
                 child: CustomPaint(
                   painter: ChalkboardBackgroundPainter(smudges: _smudges),
                 ),
               ),
-              // 2) チョーク描画層。背景は透明にして下の地を見せる。
+              // 2) Chalk stroke layer. Transparent background so the surface
+              //    below shows through.
               Positioned.fill(
                 child: Draw(
                   strokes: _strokes,
@@ -430,7 +467,7 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
                   strokePainter: (stroke) => _paintStroke(stroke, size),
                 ),
               ),
-              // 3) 最小の操作系(チョーク/黒板消し＋全消し)。
+              // 3) Minimal controls (chalk/eraser + clear all).
               Positioned(
                 right: 16,
                 bottom: 16 + MediaQuery.paddingOf(context).bottom,
@@ -448,7 +485,7 @@ class _ChalkboardPageState extends State<ChalkboardPage> {
   }
 }
 
-/// 操作クラスタ。チョーク/黒板消しの選択と全消しだけの最小構成。
+/// Control cluster. Minimal setup: chalk/eraser selection and clear all only.
 class _ChalkControls extends StatelessWidget {
   const _ChalkControls({
     required this.tool,
@@ -459,7 +496,7 @@ class _ChalkControls extends StatelessWidget {
   final ChalkTool tool;
   final ValueChanged<ChalkTool> onToolChanged;
 
-  /// 何も描いていないときは null(押せない)。
+  /// Null (disabled) when nothing has been drawn yet.
   final VoidCallback? onClear;
 
   @override
@@ -467,7 +504,7 @@ class _ChalkControls extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        // 黒板より一段暗い受け皿で、ボタンを浮かせる。
+        // A tray one shade darker than the board, to lift the buttons.
         color: ChalkboardTuning.boardEdgeColor.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(26),
         boxShadow: [
@@ -492,7 +529,8 @@ class _ChalkControls extends StatelessWidget {
             selected: tool == ChalkTool.eraser,
             onTap: () => onToolChanged(ChalkTool.eraser),
           ),
-          // 全消しは道具選択と役割が違うので、区切りの余白を広めに取る。
+          // Clear-all plays a different role than tool selection, so give it
+          // a wider separating gap.
           const SizedBox(width: 18),
           _RoundButton(
             onTap: onClear,
@@ -509,8 +547,8 @@ class _ChalkControls extends StatelessWidget {
   }
 }
 
-/// 道具(チョーク/黒板消し)の選択ボタン。選択中はチョーク白で浮かせ、非選択は
-/// 黒板になじむ緑にして暗く沈める。
+/// Tool (chalk/eraser) selection button. The selected one is lifted in chalk
+/// white; unselected ones sink into a board-matching green.
 class _ToolButton extends StatelessWidget {
   const _ToolButton({
     required this.icon,
@@ -536,8 +574,8 @@ class _ToolButton extends StatelessWidget {
   }
 }
 
-/// 角丸の押しボタン。本体アプリでは自作の「ぷっくり」パーツを使うが、サンプルは
-/// 依存を減らすため素の GestureDetector + Container で最小に作る。
+/// Rounded push button, kept minimal with a bare GestureDetector + Container
+/// to avoid extra dependencies.
 class _RoundButton extends StatelessWidget {
   const _RoundButton({
     required this.onTap,
