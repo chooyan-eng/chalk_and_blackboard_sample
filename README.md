@@ -1,5 +1,7 @@
 # chalkboard_sample
 
+![Chalkboard screenshot](blackboard_chalk_screenshot.png)
+
 A self-contained Flutter sample app that renders a chalk-and-blackboard experience
 using a fragment shader.
 
